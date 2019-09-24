@@ -20,17 +20,116 @@ import android.support.annotation.NonNull;
 
 import com.google.android.filament.proguard.UsedByReflection;
 
+/**
+ * Engine is filament's main entry-point.
+ * <p>
+ * An Engine instance main function is to keep track of all resources created by the user and
+ * manage the rendering thread as well as the hardware renderer.
+ * <p>
+ * To use filament, an Engine instance must be created first:
+ *
+ * <pre>
+ * import com.google.android.filament.*
+ *
+ * Engine engine = Engine.create();
+ * </pre>
+ * <p>
+ * Engine essentially represents (or is associated to) a hardware context
+ * (e.g. an OpenGL ES context).
+ * <p>
+ * Rendering typically happens in an operating system's window (which can be full screen), such
+ * window is managed by a {@link Renderer}.
+ * <p>
+ * A typical filament render loop looks like this:
+ *
+ *
+ * <pre>
+ * import com.google.android.filament.*
+ *
+ * Engin engine         = Engine.create();
+ * SwapChain swapChain  = engine.createSwapChain(nativeWindow);
+ * Renderer renderer    = engine.createRenderer();
+ * Scene scene          = engine.createScene();
+ * View view            = engine.createView();
+ *
+ * view.setScene(scene);
+ *
+ * do {
+ *     // typically we wait for VSYNC and user input events
+ *     if (renderer.beginFrame(swapChain)) {
+ *         renderer.render(view);
+ *         renderer.endFrame();
+ *     }
+ * } while (!quit);
+ *
+ * engine.destroyView(view);
+ * engine.destroyScene(scene);
+ * engine.destroyRenderer(renderer);
+ * engine.destroySwapChain(swapChain);
+ * engine.destroy();
+ * </pre>
+ *
+ * <h1><u>Resource Tracking</u></h1>
+ * <p>
+ * Each <code>Engine</code> instance keeps track of all objects created by the user, such as vertex
+ * and index buffers, lights, cameras, etc...
+ * The user is expected to free those resources, however, leaked resources are freed when the
+ * engine instance is destroyed and a warning is emitted in the console.
+ *
+ * <h1><u>Thread safety</u></h1>
+ * <p>
+ * An <code>Engine</code> instance is not thread-safe. The implementation makes no attempt to
+ * synchronize calls to an <code>Engine</code> instance methods.
+ * If multi-threading is needed, synchronization must be external.
+ *
+ * <h1><u>Multi-threading</u></h1>
+ * <p>
+ * When created, the <code>Engine</code> instance starts a render thread as well as multiple worker
+ * threads, these threads have an elevated priority appropriate for rendering, based on the
+ * platform's best practices. The number of worker threads depends on the platform and is
+ * automatically chosen for best performance.
+ * <p>
+ * On platforms with asymmetric cores (e.g. ARM's Big.Little), <code>Engine</code> makes some
+ * educated guesses as to which cores to use for the render thread and worker threads. For example,
+ * it'll try to keep an OpenGL ES thread on a Big core.
+ *
+ * <h1><u>Swap Chains</u></h1>
+ * <p>
+ * A swap chain represents an Operating System's <b>native</b> renderable surface.
+ * Typically it's a window or a view. Because a {@link SwapChain} is initialized from a native
+ * object, it is given to filament as an <code>Object</code>, which must be of the proper type for
+ * each platform filament is running on.
+ * <p>
+ *
+ * @see SwapChain
+ * @see Renderer
+ */
 public class Engine {
     private long mNativeObject;
     @NonNull private final TransformManager mTransformManager;
     @NonNull private final LightManager mLightManager;
     @NonNull private final RenderableManager mRenderableManager;
 
+    /**
+     * Denotes a backend
+     */
     public enum Backend {
-        DEFAULT,  // Automatically selects an appropriate driver for the platform.
-        OPENGL,   // Selects the OpenGL ES driver.
-        VULKAN,   // Selects the experimental Vulkan driver.
-        NOOP,     // Selects the no-op driver for testing purposes.
+        /**
+         * Automatically selects an appropriate driver for the platform.
+         */
+        DEFAULT,
+        /**
+         * Selects the OpenGL ES driver.
+         */
+        OPENGL,
+        /**
+         * Selects the experimental Vulkan driver.
+         */
+        VULKAN,
+        /**
+         * Selects the no-op driver for testing purposes.
+         */
+        NOOP,
     }
 
     private Engine(long nativeEngine) {
@@ -40,6 +139,19 @@ public class Engine {
         mRenderableManager = new RenderableManager(nGetRenderableManager(nativeEngine));
     }
 
+    /**
+     * Creates an instance of Engine using the default {@link Backend}
+     * <p>
+     * This method is one of the few thread-safe methods.
+     *
+     * @return A newly created <code>Engine</code>, or <code>null</code> if the GPU driver couldn't
+     *         be initialized, for instance if it doesn't support the right version of OpenGL or
+     *         OpenGL ES.
+     *
+     * @exception IllegalStateException can be thrown if there isn't enough memory to
+     * allocate the command buffer.
+     *
+     */
     @NonNull
     public static Engine create() {
         long nativeEngine = nCreateEngine(0, 0);
@@ -47,6 +159,21 @@ public class Engine {
         return new Engine(nativeEngine);
     }
 
+    /**
+     * Creates an instance of Engine using the specified {@link Backend}
+     * <p>
+     * This method is one of the few thread-safe methods.
+     *
+     * @param backend           driver backend to use
+     *
+     * @return A newly created <code>Engine</code>, or <code>null</code> if the GPU driver couldn't
+     *         be initialized, for instance if it doesn't support the right version of OpenGL or
+     *         OpenGL ES.
+     *
+     * @exception IllegalStateException can be thrown if there isn't enough memory to
+     * allocate the command buffer.
+     *
+     */
     @NonNull
     public static Engine create(@NonNull Backend backend) {
         long nativeEngine = nCreateEngine(backend.ordinal(), 0);
@@ -55,9 +182,21 @@ public class Engine {
     }
 
     /**
-     * Valid shared context:
-     * - Android: EGLContext
-     * - Other: none
+     * Creates an instance of Engine using the {@link Backend#OPENGL} and a shared OpenGL context.
+     * <p>
+     * This method is one of the few thread-safe methods.
+     *
+     * @param sharedContext  A platform-dependant OpenGL context used as a shared context
+     *                       when creating filament's internal context. On Android this parameter
+     *                       <b>must be</b> an instance of {@link android.opengl.EGLContext}.
+     *
+     * @return A newly created <code>Engine</code>, or <code>null</code> if the GPU driver couldn't
+     *         be initialized, for instance if it doesn't support the right version of OpenGL or
+     *         OpenGL ES.
+     *
+     * @exception IllegalStateException can be thrown if there isn't enough memory to
+     * allocate the command buffer.
+     *
      */
     @NonNull
     public static Engine create(@NonNull Object sharedContext) {
@@ -70,15 +209,41 @@ public class Engine {
         throw new IllegalArgumentException("Invalid shared context " + sharedContext);
     }
 
+    /**
+     * @return <code>true</code> if this <code>Engine</code> is initialized properly.
+     */
     public boolean isValid() {
         return mNativeObject != 0;
     }
 
+    /**
+     * Destroy the <code>Engine</code> instance and all associated resources.
+     * <p>
+     * This method is one of the few thread-safe methods.
+     * <p>
+     * {@link Engine#destroy()} should be called last and after all other resources have been
+     * destroyed, it ensures all filament resources are freed.
+     * <p>
+     * <code>Destroy</code> performs the following tasks:
+     * <li>Destroy all internal software and hardware resources.</li>
+     * <li>Free all user allocated resources that are not already destroyed and logs a warning.
+     *     <p>This indicates a "leak" in the user's code.</li>
+     * <li>Terminate the rendering engine's thread.</li>
+     *
+     * <pre>
+     * Engine engine = Engine.create();
+     * engine.destroy();
+     * </pre>
+     */
     public void destroy() {
         nDestroyEngine(getNativeObject());
         clearNativeObject();
     }
 
+    /**
+     * @return the backend used by this <code>Engine</code>
+     */
+    @NonNull
     public Backend getBackend() {
         return Backend.values()[(int) nGetBackend(getNativeObject())];
     }
@@ -86,25 +251,36 @@ public class Engine {
     // SwapChain
 
     /**
-     * Valid surface types:
-     * - Android: Surface
-     * - Other: none
+     * Creates an opaque {@link SwapChain} from the given OS native window handle.
+     *
+     * @param surface on Android, <b>must be</b> an instance of {@link android.view.Surface}
+     *
+     * @return a newly created {@link SwapChain} object
+     *
+     * @exception IllegalStateException can be thrown if the SwapChain couldn't be created
      */
+    @NonNull
     public SwapChain createSwapChain(@NonNull Object surface) {
         return createSwapChain(surface, SwapChain.CONFIG_DEFAULT);
     }
 
     /**
-     * Valid surface types:
-     * - Android: Surface
-     * - Other: none
+     * Creates a {@link SwapChain} from the given OS native window handle.
      *
-     * Flags: see CONFIG flags in SwapChain.
+     * @param surface on Android, <b>must be</b> an instance of {@link android.view.Surface}
+     *
+     * @param flags configuration flags, see {@link SwapChain}
+     *
+     * @return a newly created {@link SwapChain} object
+     *
+     * @exception IllegalStateException can be thrown if the SwapChain couldn't be created
      *
      * @see SwapChain#CONFIG_DEFAULT
      * @see SwapChain#CONFIG_TRANSPARENT
      * @see SwapChain#CONFIG_READABLE
+     *
      */
+    @NonNull
     public SwapChain createSwapChain(@NonNull Object surface, long flags) {
         if (Platform.get().validateSurface(surface)) {
             long nativeSwapChain = nCreateSwapChain(getNativeObject(), surface, flags);
@@ -114,6 +290,18 @@ public class Engine {
         throw new IllegalArgumentException("Invalid surface " + surface);
     }
 
+    /**
+     * Creates a {@link SwapChain} from a {@link NativeSurface}.
+     *
+     * @param surface a properly initialized {@link NativeSurface}
+     *
+     * @param flags configuration flags, see {@link SwapChain}
+     *
+     * @return a newly created {@link SwapChain} object
+     *
+     * @exception IllegalStateException can be thrown if the SwapChain couldn't be created
+     */
+    @NonNull
     public SwapChain createSwapChainFromNativeSurface(@NonNull NativeSurface surface, long flags) {
         long nativeSwapChain =
                 nCreateSwapChainFromRawPointer(getNativeObject(), surface.getNativeObject(), flags);
